@@ -199,7 +199,7 @@ function main()
     end
 
     for i in 1:100
-        for j in 1:5000 
+        for j in 1:5000
             gibbs_sample!(β, σ², τ², ỹ, X, n, p, λ)
         end
         exp_τ = sum(convert(Matrix,last(τ²,100)), dims = 1)./100 
