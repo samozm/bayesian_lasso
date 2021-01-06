@@ -23,12 +23,15 @@ Maintains previous values of σ² by adding the new value to the end of the curr
 - nothing
 """
 function update_σ!(σ², n, p, ỹ, β, D, X)
-    μ = (n-1+p)/2
+    a = (n-1+p)/2
+
+    # b = [ (ỹ - Xβᵀ)ᵀ(ỹ - Xβᵀ) + βD⁻¹βᵀ ] / 2
     ỹ_X_β = ỹ - X * transpose(β)
-    var = ( (transpose(ỹ_X_β) * (ỹ_X_β) + (β * inv(D) * transpose(β))) / 2 )[1]
-    new_σ² = rand(InverseGamma(μ,var))
+    b = ( (transpose(ỹ_X_β) * (ỹ_X_β) + (β * inv(D) * transpose(β))) / 2 )[1]
+
+    # sample from InverseGamma(a,b)
+    new_σ² = rand(InverseGamma(a,b))
     append!(σ²,new_σ²)
-    # return(sigma2)
 end
 
 """
@@ -51,9 +54,17 @@ end of the current β dataframe.
 """
 function update_β!(β, X, D, σ², ỹ)
     D⁻¹ = inv(D)
+
+    # A = (XᵀX + D⁻¹) but we only care about A⁻¹ so we'll take the inverse right away
     A⁻¹ = inv(transpose(X)*X + D⁻¹)
+
+    # for sampling β: μᵦ = A⁻¹ Xᵀ ỹ
     μ = A⁻¹ * transpose(X) * ỹ
+
+    # for sampling β: σᵦ² = σ² A⁻¹
     var = round.(last(σ²) .* A⁻¹, digits=0)
+
+    # sample from MVN(μᵦ, σᵦ²)
     new_β = rand(MultivariateNormal(μ,var))
     push!(β,new_β)
 end
@@ -78,10 +89,14 @@ end of the current τ dataframe.
 function update_τ!(τ, λ, β)
     p = size(β,2)
     new_τ = zeros(p)
+
     #TODO: is there a way to do this without a for loop?
     for i in 1:p
+        # μₜₐᵤ = √λ̅²̅/̅β̅ᵢ²
         μ = sqrt((λ^2) / (β[1,i]^2))
+        # σₜₐᵤ = λ²
         var = λ^2
+
         new_τ[i] = 1 / rand(InverseGaussian(μ,var))
     end
     push!(τ, new_τ)
@@ -147,71 +162,77 @@ function create_df(df)
     return(df)
 end
 
+"""
+    plot_results(β, olm, colnm)
 
+Plot a histogram for each parameter in β against the least squares value
+
+# Arguments
+- `β`    : a dataframe with values of β to plot (post burn-in samples)
+- `olm`  : output of lm function, the result of performing ordinary least squares on the data
+- `colnm`: array of column names taken from the data, used for plot titles
+
+# Returns
+- nothing
+"""
 function plot_results(β, olm, colnm)
+    # use gr as plot backend
     gr()
+
+    # Initialize empty array to put plots in 
     histo = Array{Plots.Plot{Plots.GRBackend},1}()
     for i in 1:size(β, 2)
+        # plot histogram with line for OLS value
         p = histogram(β[!,i], label="BLasso", title=colnm[i], size=(1600,1200))
         vline!(p, [coef(olm)[i+1]], label="OLS")
         push!(histo,p)
     end
-    print(size(histo))
     plot(histo..., layout=size(histo,1))
-    #plot!(line)
-
-    #display(histogram(β[!, 3])); display(vline!([coef(olm)[4]]))
 end
 
 function main()
     # let's use diabetes dataset from the original paper
     data = DataFrame!(CSV.File("diabetes.txt", delim=" "))
 
+    # run ols to get initial value for lambda
     olm = lm(@formula(y~age+sex+bmi+map+tc+ldl+hdl+tch+ltg+glu), data)
 
-    # Initialize σ², λ using OLS
+    # Initialize y matrix and n from data
 	n = size(data, 1)
-	sum_exp = sum(abs.(coef(olm)))
-	#σ² = [deviance(olm)/(n - p)]
     y = data[!,:y]
     ỹ = y .- mean(y)
 
+    # Initialize X matrix from data
     X = convert(Matrix, select(data, Not(:y)))
-    #X = convert(Matrix, select(data, :age, :sex, :bmi, :map))
     p = size(X, 2)
-    #printstyled(data)
 
-     # Initialize β, τ² - in monomvn these are initialized to 0
-     β = create_df(DataFrame(B = zeros(p)))
-     # do we need to use that distribution of σ², τ² from the full model? 
-     τ² = create_df(DataFrame(B = ones(p)))
-     # σ² is noninformative, any InverseGamma will work according to the paper, but it uses α=0, γ=0. 
-     # that's not technically possible so i'll use a very small value instead
-     # σ² = [rand(InverseGamma(0.0000000000001,0.0000000000001))]
-     # monomvn just uses var(y - mean(y))
-     #τ² = update_τ(τ², last(λ), last(β,1))
-     σ² = [var(ỹ)]
-     λ = [p*sqrt(last(σ²))/sum_exp]
+    # Initialize β, τ² - in monomvn these are initialized to 0
+    β = create_df(DataFrame(B = zeros(p)))
+
+    # do we need to use that distribution of σ², τ² from the full model? 
+    τ² = create_df(DataFrame(B = ones(p)))
+
+    # Initialize σ²
+    # monomvn just uses var(y - mean(y))
+    σ² = [var(ỹ)]
+
+    # Initialize λ using OLS
+    sum_exp = sum(abs.(coef(olm)))
+    λ = [p*sqrt(last(σ²))/sum_exp]
 
     # 1000 burn-in samples
     for i in 1:1000
         gibbs_sample!(β, σ², τ², ỹ, X, n, p, λ)
     end
 
+    # 50000 Gibbs samples
     for i in 1:100
-        for j in 1:5000
+        for j in 1:500
             gibbs_sample!(β, σ², τ², ỹ, X, n, p, λ)
         end
         exp_τ = sum(convert(Matrix,last(τ²,100)), dims = 1)./100 
         update_λ!(λ, sum(exp_τ), p)
     end
-    println("OLS:")
-    println(coef(olm))
-    println(deviance(olm))
-    println("Bayesian")
-    println(mapcols(median,last(β,5000)))
-
-    print(sum((y - X * transpose(convert(Array, mapcols(median,last(β,500))))).^2))
 
     plot_results(last(β,500), olm, names(select(data, Not(:y))))
     gui()
