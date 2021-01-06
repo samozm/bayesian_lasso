@@ -193,8 +193,8 @@ function main()
      σ² = [var(ỹ)]
      λ = [p*sqrt(last(σ²))/sum_exp]
 
-    # 300 burn-in samples
-    for i in 1:300
+    # 1000 burn-in samples
+    for i in 1:1000
         gibbs_sample!(β, σ², τ², ỹ, X, n, p, λ)
     end
 
