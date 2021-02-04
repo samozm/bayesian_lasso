@@ -31,11 +31,6 @@ function update_σ!(σ², n, p, ỹ, β, D, X)
     ỹ_X_β = ỹ - (X * transpose(β))
     b = ( (transpose(ỹ_X_β) * (ỹ_X_β) + (β * inv(D) * transpose(β))) / 2 )[1]
 
-    #@printf("a: %f", a)
-    #@printf("b: %f", b)
-    #println("\n---\n")
-
-
     # sample from InverseGamma(a,b)
     new_σ² = rand(InverseGamma(a,b))
     append!(σ²,new_σ²)
@@ -70,14 +65,6 @@ function update_β!(β, X, D, σ², ỹ)
 
     # for sampling β: σᵦ² = σ² A⁻¹
     var = round.(last(σ²) .* A⁻¹, digits=3)
-
-    #printstyled(var[1:10,1:10])
-    #println("Var")
-    #show(stdout, "text/plain", var[1:10,1:10])
-    #println("\n---\n")
-    ##println("Tau")
-    #show(stdout, "text/plain", D[1:10,1:10])
-    #println("\n---\n")
 
     # sample from MVN(μᵦ, σᵦ²)
     new_β = rand(MultivariateNormal(μ,var))
